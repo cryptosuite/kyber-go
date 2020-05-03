@@ -38,6 +38,8 @@ type ParameterSet struct {
 	publicKeyBytes  int
 	secretKeyBytes  int
 	ciphertextBytes int
+	
+	sharedSecretBytes int
 }
 
 //WhichParamenterSet returns Kyber512,Kyber768 or Kyber1024 in string fmt
@@ -60,12 +62,10 @@ func (p *ParameterSet) CryptoCiphertextBytes() int {
 	return p.ciphertextBytes
 }
 
-/*
-//CryptoBytes returns symBytes=32
-func CryptoBytes() int {
-	return symBytes
+//CryptoSharedSecretBytes returns the size of ss
+func (p *ParameterSet) CryptoSharedSecretBytes() int {
+	return p.sharedSecretBytes
 }
-*/
 
 func setParams(name string, kyberK int) *ParameterSet {
 	var p ParameterSet
