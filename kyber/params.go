@@ -96,6 +96,8 @@ func setParams(name string, kyberK int) *ParameterSet {
 	p.secretKeyBytes = p.indcpaSecretKeyBytes + p.indcpaPublicKeyBytes + 2*SymBytes
 	p.ciphertextBytes = p.indcpaBytes
 
+        p.sharedSecretBytes = 32
+
 	return &p
 
 }
