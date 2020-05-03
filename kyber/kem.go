@@ -17,8 +17,7 @@ var (
 	// ErrInvalidCipherTextSize is the error thrown via a panic when a byte serialized ciphertext is an invalid size.
 	ErrInvalidCipherTextSize = errors.New("kyber: invalid ciphertext size")
 
-	// ErrInvalidPrivateKey is the error returned when a byte serialized
-	// private key is malformed.
+	// ErrInvalidPrivateKey is the error returned when a byte serialized private key is malformed.
 	ErrInvalidPrivateKey = errors.New("kyber: invalid private key")
 )
 
