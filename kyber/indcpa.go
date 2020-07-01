@@ -2,9 +2,8 @@ package kyber
 
 import (
 	"crypto/rand"
-	"io"
-
 	"golang.org/x/crypto/sha3"
+	"io"
 )
 
 /*******precomp*********/
