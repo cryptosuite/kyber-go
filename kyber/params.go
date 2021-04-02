@@ -1,103 +1,94 @@
 package kyber
 
 const (
-	kyberN = 256
-	kyberQ = 7681
+	paramsN = 256
+	paramsQ = 3329
 
-	//SymBytes is size in bytes of shared key, hashes, and seeds
-	SymBytes = 32
+	paramsSymBytes = 32 //size in bytes of hashes and seeds
+	paramsSSBytes  = 32 //size in bytes of shared key
 
-	polyBytes           = 416
-	polyCompressedBytes = 96
+	paramsPolyBytes = 384
+
+	paramsINDCPAMsgBytes = paramsSymBytes
 )
 
-var (
-	//Kyber512 with...
-	Kyber512 = setParams("Kyber512", 2)
-	//Kyber768 with...
-	Kyber768 = setParams("Kyber768", 3)
-	//Kyber1024 with...
-	Kyber1024 = setParams("Kyber1024", 4)
-)
+type ParamSet struct {
+	name string
 
-//ParameterSet is what it is.
-type ParameterSet struct {
-	name   string
-	kyberK int
+	paramsK    int
+	paramsETA1 int
+	paramsETA2 int
+	//paramsU    int
+	//paramsV    int
 
-	eta int
+	//paramsPolyBytes          int
+	paramsPolyCompressedBytes       int
+	paramsPolyVectorBytes           int // paramsK * paramsPolyBytes
+	paramsPolyVectorCompressedBytes int //paramsK * [320/352]
 
-	polyVecBytes           int
-	polyVecCompressedBytes int
+	paramsINDCPAPublicKeyBytes int // paramsPolyVectorBytes + paramsSymBytes
+	paramsINDCPASecretKeyBytes int // paramsPolyVectorBytes
+	paramsINDCPABytes          int // paramsPolyVectorCompressedBytes + paramsPolyCompressedBytes
 
-	indcpaMsgBytes       int
-	indcpaPublicKeyBytes int
-	indcpaSecretKeyBytes int
-	indcpaBytes          int
-
-	publicKeyBytes  int
-	secretKeyBytes  int
-	ciphertextBytes int
-	
-	sharedSecretBytes int
+	paramsPublicKeyBytes  int // paramsINDCPAPublicKeyBytes
+	paramsSecretKeyBytes  int // paramsINDCPASecretKeyBytes + paramsINDCPAPublicKeyBytes + 2*paramsSymBytes // 32 bytes of additional space to save H(t)
+	paramsCiphertextBytes int // paramsINDCPABytes
 }
 
-//WhichParamenterSet returns Kyber512,Kyber768 or Kyber1024 in string fmt
-func (p *ParameterSet) WhichParamenterSet() string {
-	return p.name
+func (pp *ParamSet) ParamsCiphertextBytes() int {
+	return pp.paramsCiphertextBytes
 }
 
-//CryptoSecretKeyBytes returns the size of secretKeyBytes
-func (p *ParameterSet) CryptoSecretKeyBytes() int {
-	return p.secretKeyBytes
+func (pp *ParamSet) ParamsSecretKeyBytes() int {
+	return pp.paramsSecretKeyBytes
 }
 
-//CryptoPublicKeyBytes returns the size of publicKeyBytes
-func (p *ParameterSet) CryptoPublicKeyBytes() int {
-	return p.publicKeyBytes
+func (pp *ParamSet) ParamsPublicKeyBytes() int {
+	return pp.paramsPublicKeyBytes
 }
 
-//CryptoCiphertextBytes returns the size of ciphertextBytes
-func (p *ParameterSet) CryptoCiphertextBytes() int {
-	return p.ciphertextBytes
-}
-
-//CryptoSharedSecretBytes returns the size of ss
-func (p *ParameterSet) CryptoSharedSecretBytes() int {
-	return p.sharedSecretBytes
-}
-
-func setParams(name string, kyberK int) *ParameterSet {
-	var p ParameterSet
-
-	p.name = name
-	p.kyberK = kyberK
-
-	switch kyberK {
+func newParamSet(name string, paramsK int, paramsETA1 int, paramsETA2 int, paramsU int, paramsV int) *ParamSet {
+	res := new(ParamSet)
+	res.name = name
+	res.paramsK = paramsK
+	res.paramsETA1 = paramsETA1
+	res.paramsETA2 = paramsETA2
+	//res.paramsU = paramsU
+	//res.paramsV = paramsV
+	switch res.paramsK {
 	case 2:
-		p.eta = 5
+		res.paramsPolyCompressedBytes = 128
+		res.paramsPolyVectorCompressedBytes = res.paramsK * 320
 	case 3:
-		p.eta = 4
+		res.paramsPolyCompressedBytes = 128
+		res.paramsPolyVectorCompressedBytes = res.paramsK * 320
 	case 4:
-		p.eta = 3
-	default:
-		panic("kyberK: 2-Kyber512, 3-Kyber768, 4-Kyber1024")
+		res.paramsPolyCompressedBytes = 160
+		res.paramsPolyVectorCompressedBytes = res.paramsK * 352
 	}
+	res.paramsPolyVectorBytes = res.paramsK * paramsPolyBytes
 
-	p.polyVecBytes = kyberK * polyBytes
-	p.polyVecCompressedBytes = kyberK * 352
+	res.paramsINDCPAPublicKeyBytes = res.paramsPolyVectorBytes + paramsSymBytes
+	res.paramsINDCPASecretKeyBytes = res.paramsPolyVectorBytes
+	res.paramsINDCPABytes = res.paramsPolyVectorCompressedBytes + res.paramsPolyCompressedBytes
 
-	p.indcpaMsgBytes = SymBytes
-	p.indcpaPublicKeyBytes = p.polyVecBytes + SymBytes
-	p.indcpaSecretKeyBytes = p.polyVecBytes
-	p.indcpaBytes = p.polyVecCompressedBytes + polyCompressedBytes
+	res.paramsPublicKeyBytes = res.paramsINDCPAPublicKeyBytes
+	res.paramsSecretKeyBytes = res.paramsINDCPASecretKeyBytes + res.paramsINDCPAPublicKeyBytes + 2*paramsSymBytes // 32 bytes of additional space to save H(t)
+	res.paramsCiphertextBytes = res.paramsINDCPABytes
 
-	p.publicKeyBytes = p.indcpaPublicKeyBytes
-	p.secretKeyBytes = p.indcpaSecretKeyBytes + p.indcpaPublicKeyBytes + 2*SymBytes
-	p.ciphertextBytes = p.indcpaBytes
-
-        p.sharedSecretBytes = 32
-
-	return &p
-
+	return res
 }
+
+func (pp *ParamSet) KeyPair(seed []byte) ([]byte, []byte, error) {
+	return KeyPair(pp, seed)
+}
+func (pp *ParamSet) Enc(pk []byte) ([]byte, []byte, error) {
+	return Enc(pp, pk)
+}
+func (pp *ParamSet) Dec(cipher []byte, sk []byte) ([]byte, error) {
+	return Dec(pp, cipher, sk)
+}
+
+var Kyber512 = newParamSet("Kyber512", 2, 3, 2, 10, 4)
+var Kyber768 = newParamSet("Kyber768", 3, 2, 2, 10, 4)
+var Kyber1024 = newParamSet("Kyber1024", 4, 2, 2, 11, 5)

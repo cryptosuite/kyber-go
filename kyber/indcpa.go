@@ -1,281 +1,245 @@
 package kyber
 
 import (
-	"crypto/rand"
 	"golang.org/x/crypto/sha3"
-	"io"
 )
 
-/*******precomp*********/
-
-type indcpaPublicKey struct {
-	packed []byte
-	h      [32]byte
+type INDCPAPublicKey struct {
+	t    polyVec
+	seed [paramsSymBytes]byte
 }
 
-type indcpaSecretKey struct {
-	packed []byte
+func NewINDCPAPublicKey(pp *ParamSet) *INDCPAPublicKey {
+	return &INDCPAPublicKey{t: *newPolyVec(pp)}
 }
 
-//to and from bytes for indcpaPK
-func (pk *indcpaPublicKey) toBytes() []byte {
-	return pk.packed
-}
-
-func (pk *indcpaPublicKey) fromBytes(p *ParameterSet, b []byte) error {
-	if len(b) != p.indcpaPublicKeyBytes {
-		return ErrInvalidKeySize
+// Unpack de-serializes public key from a byte array;
+//approximate inverse of Pack
+func (pk *INDCPAPublicKey) Unpack(pp *ParamSet, a []byte) error {
+	if len(a) != pp.paramsINDCPAPublicKeyBytes {
+		return ErrInvalidLength
 	}
-
-	pk.packed = make([]byte, len(b))
-	copy(pk.packed, b)
-	pk.h = sha3.Sum256(b)
-
+	err := pk.t.fromBytes(pp, a[:pp.paramsPolyVectorBytes])
+	if err != nil {
+		return err
+	}
+	copy(pk.seed[:], a[pp.paramsPolyVectorBytes:])
 	return nil
 }
 
-//to and from bytes for indcpaSK
-func (sk *indcpaSecretKey) fromBytes(p *ParameterSet, b []byte) error {
-	if len(b) != p.indcpaSecretKeyBytes {
-		return ErrInvalidKeySize
+// Pack serializes the public key as concatenation of the serialized
+//vector of polynomials t and the public seed used to generate the matrix A.
+func (pk *INDCPAPublicKey) Pack(pp *ParamSet) []byte {
+	res := make([]byte, pp.paramsINDCPAPublicKeyBytes)
+	copy(res[:pp.paramsPolyVectorBytes], pk.t.toBytes(pp))
+	copy(res[pp.paramsPolyVectorBytes:], pk.seed[:])
+	return res
+}
+
+type INDCPASecretKey struct {
+	s polyVec
+}
+
+func NewINDCPASecretKey(pp *ParamSet) *INDCPASecretKey {
+	return &INDCPASecretKey{s: *newPolyVec(pp)}
+}
+
+// Pack serializes the secret key
+func (sk *INDCPASecretKey) Pack(pp *ParamSet) []byte {
+	return sk.s.toBytes(pp)
+}
+
+// Unpack de-serialize the secret key; inverse of Serialize
+func (sk *INDCPASecretKey) Unpack(pp *ParamSet, a []byte) error {
+	return sk.s.fromBytes(pp, a)
+}
+
+type INDCPACiphertext struct {
+	u polyVec
+	v poly
+}
+
+func NewINDCPACiphertext(pp *ParamSet) *INDCPACiphertext {
+	return &INDCPACiphertext{
+		u: *newPolyVec(pp),
+		v: poly{},
 	}
+}
 
-	sk.packed = make([]byte, len(b))
-	copy(sk.packed, b)
+// Pack serializes the ciphertext as concatenation of the compressed and serialized
+//vector of polynomials u and the compressed and serialized polynomial v
+func (cp *INDCPACiphertext) Pack(pp *ParamSet) []byte {
+	res := make([]byte, 0, pp.paramsINDCPABytes)
+	res = append(res, cp.u.compress(pp)[:]...)
+	res = append(res, cp.v.compress(pp)[:]...)
+	return res
+}
 
+// Unpack De-serialize and decompress ciphertext from a byte array;
+//approximate inverse of Pack
+func (cp *INDCPACiphertext) Unpack(pp *ParamSet, a []byte) error {
+	if len(a) != pp.paramsINDCPABytes {
+		return ErrInvalidLength
+	}
+	err := cp.u.decompress(pp, a[:pp.paramsPolyVectorCompressedBytes])
+	if err != nil {
+		return err
+	}
+	err = cp.v.decompress(pp, a[pp.paramsPolyVectorCompressedBytes:])
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-//a method for polyvec
-func (v *polyVec) compressedSize() int {
-	return len(v.vec) * 352
-}
-
-/*********************/
-
-//pack and unpack for PK
-func packPK(r []byte, pk *polyVec, seed []byte) {
-	pk.compress(r)
-	copy(r[pk.compressedSize():], seed[:SymBytes])
-}
-
-func unpackPK(pk *polyVec, seed, packedPk []byte) {
-	pk.decompress(packedPk)
-
-	idx := pk.compressedSize()
-	copy(seed, packedPk[idx:idx+SymBytes])
-}
-
-//pack and unpack for Ciphertext
-func packCiphertext(r []byte, b *polyVec, v *poly) {
-	b.compress(r)
-	v.compress(r[b.compressedSize():])
-}
-
-func unpackCiphertext(b *polyVec, v *poly, c []byte) {
-	b.decompress(c)
-	v.decompress(c[b.compressedSize():])
-}
-
-//pack and unpack for SK
-func packSK(r []byte, sk *polyVec) {
-	sk.toBytes(r)
-}
-
-func unpackSK(sk *polyVec, packedSk []byte) {
-	sk.fromBytes(packedSk)
-}
-
-//gen matrix, transposed deciding whether 0-A or 1-A^T is generated
-func genMatrix(a []polyVec, seed []byte, transposed bool) {
-	const (
-		shake128Rate = 168
-		maxnBlocks   = 4
-	)
-	var val uint16
-	var buf [shake128Rate * maxnBlocks]byte
-	var extSeed [SymBytes + 2]byte
-
-	copy(extSeed[:SymBytes], seed)
-
-	xof := sha3.NewShake128()
-
-	for i, v := range a {
-		for j, p := range v.vec {
-			if transposed {
-				extSeed[SymBytes] = byte(i)
-				extSeed[SymBytes+1] = byte(j)
-			} else {
-				extSeed[SymBytes] = byte(j)
-				extSeed[SymBytes+1] = byte(i)
-			}
-
-			xof.Write(extSeed[:])
-			xof.Read(buf[:])
-
-			for ctr, pos, maxPos := 0, 0, len(buf); ctr < kyberN; {
-				val = (uint16(buf[pos]) | (uint16(buf[pos+1]) << 8)) & 0x1fff
-				if val < kyberQ {
-					p.coeffs[ctr] = val
-					ctr++
-				}
-				if pos += 2; pos == maxPos {
-					xof.Read(buf[:shake128Rate])
-					pos, maxPos = 0, shake128Rate
-				}
-			}
-
-			xof.Reset()
-		}
-	}
-}
-
-/*********************/
-
-func (p *ParameterSet) allocMatrix() []polyVec {
-	m := make([]polyVec, 0, p.kyberK)
-	for i := 0; i < p.kyberK; i++ {
-		m = append(m, p.allocPolyVec())
-	}
-	return m
-}
-
-func (p *ParameterSet) allocPolyVec() polyVec {
-	vec := make([]*poly, 0, p.kyberK)
-	for i := 0; i < p.kyberK; i++ {
-		vec = append(vec, new(poly))
-	}
-
-	return polyVec{vec}
-}
-
-/*******METHODS*********/
-
-//key pair
-func (p *ParameterSet) indcpaKeyPair(indcpaSeed []byte) (*indcpaPublicKey, *indcpaSecretKey, error) {
-	sk := &indcpaSecretKey{
-		packed: make([]byte, p.indcpaSecretKeyBytes),
-	}
-	pk := &indcpaPublicKey{
-		packed: make([]byte, p.indcpaPublicKeyBytes),
-	}
-
-	var indcpaSeedBuf [64]byte
-	var publicSeed, noiseSeed []byte
-	publicSeed = make([]byte, SymBytes)
-	noiseSeed = make([]byte, SymBytes)
-
-	if indcpaSeed != nil {
-		indcpaSeedBuf = sha3.Sum512(indcpaSeed[:])
+// INDCPAKeyPair generates public and private key for the CPA-secure
+//public-key encryption scheme underlying Kyber
+func INDCPAKeyPair(pp *ParamSet, seed []byte) ([]byte, []byte, []byte, error) {
+	var err error
+	sk := NewINDCPASecretKey(pp)
+	pk := NewINDCPAPublicKey(pp)
+	e := newPolyVec(pp)
+	var buf [64]byte
+	if seed != nil {
+		buf = sha3.Sum512(seed[:paramsSymBytes])
 	} else {
-		buf := make([]byte, SymBytes)
-		if _, err := io.ReadFull(rand.Reader, buf); err != nil {
-			return nil, nil, err
+		seed = randomBytes(paramsSymBytes)
+		buf = sha3.Sum512(seed) //seed for t and s
+	}
+	A, err := generateMatrix(pp, buf[:paramsSymBytes], false)
+	if err != nil {
+		return seed, nil, nil, err
+	}
+	var nonce byte
+	for i := 0; i < pp.paramsK; i++ {
+		err = sk.s.vector[i].getNoiseETA1(pp, buf[paramsSymBytes:], nonce)
+		nonce++
+		if err != nil {
+			return seed, nil, nil, err
 		}
-		indcpaSeedBuf = sha3.Sum512(buf[:])
 	}
-
-	copy(publicSeed[:], indcpaSeedBuf[:SymBytes])
-	copy(noiseSeed[:], indcpaSeedBuf[SymBytes:])
-
-	a := p.allocMatrix()
-	genMatrix(a, publicSeed, false)
-
-	var nonce byte
-	skpv := p.allocPolyVec()
-	for _, pv := range skpv.vec {
-		pv.getNoise(noiseSeed, nonce, p.eta)
+	for i := 0; i < pp.paramsK; i++ {
+		err = e.vector[i].getNoiseETA1(pp, buf[paramsSymBytes:], nonce)
 		nonce++
+		if err != nil {
+			return seed, nil, nil, err
+		}
 	}
+	sk.s.ntt(pp)
+	e.ntt(pp)
 
-	skpv.ntt()
-
-	e := p.allocPolyVec()
-	for _, pv := range e.vec {
-		pv.getNoise(noiseSeed, nonce, p.eta)
-		nonce++
+	// t =A*s + e
+	for i := 0; i < pp.paramsK; i++ {
+		pk.t.vector[i] = *baseMulACCMontgomery(pp, A[i], &sk.s)
+		pk.t.vector[i].toMont()
 	}
-
-	// matrix-vector multiplication
-	pkpv := p.allocPolyVec()
-	for i, pv := range pkpv.vec {
-		pv.pointwiseAcc(&skpv, &a[i])
-	}
-
-	pkpv.invntt()
-	pkpv.add(&pkpv, &e)
-
-	packSK(sk.packed, &skpv)
-	packPK(pk.packed, &pkpv, publicSeed)
-	pk.h = sha3.Sum256(pk.packed)
-
-	return pk, sk, nil
+	pk.t = *pk.t.add(pp, e)
+	pk.t.reduce(pp)
+	copy(pk.seed[:], buf[:paramsSymBytes]) // cache the public seed
+	//skB:=sk.Pack(pp)
+	//p:=newPolyVec(pp)
+	//_ = p.fromBytes(pp,skB)
+	//p.reduce(pp)
+	//got := p.toBytes(pp)
+	//if !bytes.Equal(skB,got){
+	//}
+	return seed, pk.Pack(pp), sk.Pack(pp), nil
 }
 
-//enc
-func (p *ParameterSet) indcpaEncrypt(c, m []byte, pk *indcpaPublicKey, coins []byte) {
-	var k, v, epp poly
-	var seed [SymBytes]byte
+// INDCPAEnc is encryption function of the CPA-secure
+//public-key encryption scheme underlying Kyber.
+func INDCPAEnc(pp *ParamSet, mB []byte, pkB []byte, coins []byte) ([]byte, error) {
+	res := NewINDCPACiphertext(pp)
 
-	pkpv := p.allocPolyVec()
-	unpackPK(&pkpv, seed[:], pk.packed)
+	// acquired message
+	m := new(poly)
+	err := m.fromMsg(mB)
+	if err != nil {
+		return nil, err
+	}
+	var nonce uint8
 
-	k.fromMsg(m)
+	pk := NewINDCPAPublicKey(pp)
+	err = pk.Unpack(pp, pkB)
+	if err != nil {
+		return nil, err
+	}
 
-	pkpv.ntt()
+	// generate transposed matrix
+	At, err := generateMatrix(pp, pk.seed[:], true)
+	if err != nil {
+		return nil, err
+	}
 
-	at := p.allocMatrix()
-	genMatrix(at, seed[:], true)
-
-	var nonce byte
-	sp := p.allocPolyVec()
-	for _, pv := range sp.vec {
-		pv.getNoise(coins, nonce, p.eta)
+	r := newPolyVec(pp)
+	for i := 0; i < pp.paramsK; i++ {
+		err = r.vector[i].getNoiseETA1(pp, coins, nonce)
+		if err != nil {
+			return nil, err
+		}
 		nonce++
 	}
 
-	sp.ntt()
-
-	ep := p.allocPolyVec()
-	for _, pv := range ep.vec {
-		pv.getNoise(coins, nonce, p.eta)
+	e1 := newPolyVec(pp)
+	for i := 0; i < pp.paramsK; i++ {
+		err = e1.vector[i].getNoiseETA2(pp, coins, nonce)
+		if err != nil {
+			return nil, err
+		}
 		nonce++
 	}
 
-	// matrix-vector multiplication
-	bp := p.allocPolyVec()
-	for i, pv := range bp.vec {
-		pv.pointwiseAcc(&sp, &at[i])
+	e2 := new(poly)
+	err = e2.getNoiseETA2(pp, coins, nonce)
+	if err != nil {
+		return nil, err
 	}
+	nonce++
 
-	bp.invntt()
-	bp.add(&bp, &ep)
+	r.ntt(pp)
 
-	v.pointwiseAcc(&pkpv, &sp)
-	v.invntt()
+	// u=Ar+e1
+	for i := 0; i < pp.paramsK; i++ {
+		res.u.vector[i] = *baseMulACCMontgomery(pp, At[i], r)
+	}
+	res.u.invntt(pp)
+	res.u = *res.u.add(pp, e1)
+	res.u.reduce(pp)
 
-	epp.getNoise(coins, nonce, p.eta)
+	// v=t*r+e2+m
+	res.v = *baseMulACCMontgomery(pp, &pk.t, r)
+	res.v.invntt()
+	res.v = *res.v.add(e2).add(m)
+	res.v.reduce()
 
-	v.add(&v, &epp)
-	v.add(&v, &k)
-
-	packCiphertext(c, &bp, &v)
+	return res.Pack(pp), nil
 }
 
-//dec
-func (p *ParameterSet) indcpaDecrypt(m, c []byte, sk *indcpaSecretKey) {
-	var v, mp poly
+// INDCPADec is decryption function of the CPA-secure
+//public-key encryption scheme underlying Kyber.
+func INDCPADec(pp *ParamSet, cB []byte, skB []byte) ([]byte, error) {
+	var err error
 
-	skpv, bp := p.allocPolyVec(), p.allocPolyVec()
-	unpackCiphertext(&bp, &v, c)
-	unpackSK(&skpv, sk.packed)
+	c := NewINDCPACiphertext(pp)
+	err = c.Unpack(pp, cB)
+	if err != nil {
+		return nil, err
+	}
 
-	bp.ntt()
+	// ntt(sk) but not ntt(s)_T?
+	sk := NewINDCPASecretKey(pp)
+	err = sk.Unpack(pp, skB)
+	if err != nil {
+		return nil, err
+	}
 
-	mp.pointwiseAcc(&skpv, &bp)
-	mp.invntt()
+	// m'=v-ntt_-1(ntt(s)_T*ntt(u))
+	c.u.ntt(pp)
+	got := baseMulACCMontgomery(pp, &sk.s, &c.u)
+	got.invntt()
 
-	mp.sub(&mp, &v)
+	got = c.v.sub(got)
+	got.reduce()
 
-	mp.toMsg(m)
+	return got.toMsg(), nil
 }

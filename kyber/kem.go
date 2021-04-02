@@ -1,185 +1,91 @@
 package kyber
 
 import (
-	"bytes"
-	"crypto/rand"
 	"crypto/subtle"
 	"errors"
-	"io"
-
 	"golang.org/x/crypto/sha3"
 )
 
-var (
-	// ErrInvalidKeySize is the error returned when a byte serailized key is an invalid size.
-	ErrInvalidKeySize = errors.New("kyber: invalid key size")
+// KeyPair generates public and private key for CCA-secure Kyber key encapsulation mechanism
+func KeyPair(pp *ParamSet, seed []byte) ([]byte, []byte, error) {
+	if pp == nil {
+		return nil, nil, errors.New("the param set is nil")
+	}
+	if seed == nil {
+		return nil, nil, errors.New("the seed is nil")
+	}
+	if len(seed) != 2*paramsSymBytes {
+		return nil, nil, ErrInvalidLength
+	}
+	pk := make([]byte, 0, pp.paramsPublicKeyBytes)
+	sk := make([]byte, 0, pp.paramsSecretKeyBytes)
+	tmp, INDPkB, INDSkB, err := INDCPAKeyPair(pp, seed[:paramsSymBytes])
+	copy(seed[:paramsSymBytes], tmp[:])
+	if err != nil {
+		return nil, nil, err
+	}
+	pk = append(pk, INDPkB...)
 
-	// ErrInvalidCipherTextSize is the error thrown via a panic when a byte serialized ciphertext is an invalid size.
-	ErrInvalidCipherTextSize = errors.New("kyber: invalid ciphertext size")
+	sk = append(sk, INDSkB...)
+	sk = append(sk, INDPkB...)
 
-	// ErrInvalidPrivateKey is the error returned when a byte serialized private key is malformed.
-	ErrInvalidPrivateKey = errors.New("kyber: invalid private key")
-)
-
-/*******precomp*********/
-
-//PublicKey is related to ParameterSet
-type PublicKey struct {
-	pk *indcpaPublicKey
-	p  *ParameterSet
+	hash := make([]byte, paramsSymBytes)
+	sha3.ShakeSum256(hash, INDPkB[:pp.paramsPublicKeyBytes-paramsSymBytes]) // compute H(t)
+	sk = append(sk, hash...)
+	sk = append(sk, seed[paramsSymBytes:]...) //random z for failure of kem
+	return pk, sk, nil
 }
 
-//SecretKey includes Publickey
-type SecretKey struct {
-	PublicKey
-	sk *indcpaSecretKey
-	z  []byte
-}
-
-//Bytes returns PublicKey in form []byte
-func (pk *PublicKey) Bytes() []byte {
-	return pk.pk.toBytes()
-}
-
-//Bytes returns SecretKey in form []byte
-func (sk *SecretKey) Bytes() []byte {
-	p := sk.PublicKey.p
-
-	b := make([]byte, 0, p.secretKeyBytes)
-	b = append(b, sk.sk.packed...)
-	b = append(b, sk.PublicKey.pk.packed...)
-	b = append(b, sk.PublicKey.pk.h[:]...)
-	b = append(b, sk.z...)
-
-	return b
-}
-
-// PublicKeyFromBytes []byte to struct
-func (p *ParameterSet) PublicKeyFromBytes(b []byte) (*PublicKey, error) {
-	pk := &PublicKey{
-		pk: new(indcpaPublicKey),
-		p:  p,
+// Enc generates cipher text and shared secret for given public key
+func Enc(pp *ParamSet, pkB []byte) ([]byte, []byte, error) {
+	if len(pkB) != pp.paramsPublicKeyBytes {
+		return nil, nil, ErrInvalidLength
 	}
+	buf := make([]byte, 0, 2*paramsSymBytes)
+	kr := make([]byte, 0, 2*paramsSymBytes)
 
-	if err := pk.pk.fromBytes(p, b); err != nil {
-		return nil, err
-	}
+	hash := make([]byte, paramsSymBytes)
 
-	return pk, nil
-}
+	sha3.ShakeSum256(hash, randomBytes(paramsSymBytes))
+	buf = append(buf, hash...)
 
-// SecretKeyFromBytes []byte to struct
-func (p *ParameterSet) SecretKeyFromBytes(b []byte) (*SecretKey, error) {
-	if len(b) != p.secretKeyBytes {
-		return nil, ErrInvalidKeySize
-	}
+	sha3.ShakeSum256(hash, pkB)
+	buf = append(buf, hash...)
 
-	sk := new(SecretKey)
-	sk.sk = new(indcpaSecretKey)
-	sk.z = make([]byte, SymBytes)
-	sk.PublicKey.pk = new(indcpaPublicKey)
-	sk.PublicKey.p = p
-
-	off := p.indcpaSecretKeyBytes
-	if err := sk.PublicKey.pk.fromBytes(p, b[off:off+p.publicKeyBytes]); err != nil {
-		return nil, err
-	}
-	off += p.publicKeyBytes
-	if !bytes.Equal(sk.PublicKey.pk.h[:], b[off:off+SymBytes]) {
-		return nil, ErrInvalidPrivateKey
-	}
-	off += SymBytes
-	copy(sk.z, b[off:])
-
-	if err := sk.sk.fromBytes(p, b[:p.indcpaSecretKeyBytes]); err != nil {
-		return nil, err
-	}
-
-	return sk, nil
-}
-
-/*******METHODS*********/
-
-//CryptoKemKeyPair is a method of Params Set
-func (p *ParameterSet) CryptoKemKeyPair(seed []byte) (*PublicKey, *SecretKey, error) {
-	kp := new(SecretKey)
-	var indcpaSeed []byte
-
-	if seed != nil {
-		SeedBuf := sha3.Sum512(seed[:])
-		indcpaSeed = make([]byte, SymBytes)
-		copy(indcpaSeed[:], SeedBuf[:SymBytes])
-		kp.z = make([]byte, SymBytes)
-		copy(kp.z[:], SeedBuf[SymBytes:])
-	}
-
-	var err error
-	if kp.PublicKey.pk, kp.sk, err = p.indcpaKeyPair(indcpaSeed); err != nil {
+	h := sha3.Sum512(buf)
+	kr = append(kr, h[:]...)
+	ct, err := INDCPAEnc(pp, buf[:paramsSymBytes], pkB, kr[paramsSymBytes:])
+	if err != nil {
 		return nil, nil, err
 	}
 
-	kp.PublicKey.p = p
+	sha3.ShakeSum256(hash, ct)
+	copy(kr[paramsSymBytes:], hash[:])
 
-	if kp.z == nil {
-		kp.z = make([]byte, SymBytes)
-		if _, err := io.ReadFull(rand.Reader, kp.z); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	return &kp.PublicKey, kp, nil
+	sha3.ShakeSum256(hash, kr)
+	ss := make([]byte, paramsSSBytes)
+	copy(ss, hash)
+	return ct, ss, nil
 }
 
-//CryptoKemEnc is a method of pk
-func (pk *PublicKey) CryptoKemEnc() (cipherText []byte, sharedSecret []byte, err error) {
-	var buf [SymBytes]byte
-	if _, err = io.ReadFull(rand.Reader, buf[:]); err != nil {
-		return nil, nil, err
+// Dec generates shared secret for given cipher text and private key
+func Dec(pp *ParamSet, cB []byte, skB []byte) ([]byte, error) {
+	ss := make([]byte, paramsSSBytes)
+
+	pk := skB[pp.paramsINDCPASecretKeyBytes : pp.paramsINDCPASecretKeyBytes+pp.paramsINDCPAPublicKeyBytes]
+	sk := skB[:pp.paramsINDCPASecretKeyBytes]
+
+	buf, err := INDCPADec(pp, cB[:], sk)
+	kr := sha3.Sum512(append(buf, skB[pp.paramsSecretKeyBytes-2*paramsSymBytes:pp.paramsSecretKeyBytes-paramsSymBytes]...))
+	cmp, err := INDCPAEnc(pp, buf, pk, kr[paramsSymBytes:])
+	f := uint8(1 - subtle.ConstantTimeCompare(cB[:], cmp))
+	krh := sha3.Sum256(cB[:])
+	for i := 0; i < paramsSymBytes; i++ {
+		b := skB[:pp.paramsSecretKeyBytes-paramsSymBytes+i]
+		kr[i] = kr[i] ^ (f & (kr[i] ^ b[i]))
 	}
-	buf = sha3.Sum256(buf[:])
-
-	hKr := sha3.New512()
-	hKr.Write(buf[:])
-	hKr.Write(pk.pk.h[:])
-	kr := hKr.Sum(nil)
-
-	cipherText = make([]byte, pk.p.ciphertextBytes)
-	pk.p.indcpaEncrypt(cipherText, buf[:], pk.pk, kr[SymBytes:])
-
-	hc := sha3.Sum256(cipherText)
-	copy(kr[SymBytes:], hc[:])
-	hSs := sha3.New256()
-	hSs.Write(kr)
-	sharedSecret = hSs.Sum(nil)
-
-	return
-}
-
-//CryptoKemDec is a method of sk
-func (sk *SecretKey) CryptoKemDec(cipherText []byte) (sharedSecret []byte) {
-	var buf [2 * SymBytes]byte
-
-	p := sk.PublicKey.p
-	if len(cipherText) != p.CryptoCiphertextBytes() {
-		panic(ErrInvalidCipherTextSize)
-	}
-	p.indcpaDecrypt(buf[:SymBytes], cipherText, sk.sk)
-
-	copy(buf[SymBytes:], sk.PublicKey.pk.h[:])
-	kr := sha3.Sum512(buf[:])
-
-	cmp := make([]byte, p.ciphertextBytes)
-	p.indcpaEncrypt(cmp, buf[:SymBytes], sk.PublicKey.pk, kr[SymBytes:])
-
-	hc := sha3.Sum256(cipherText)
-	copy(kr[SymBytes:], hc[:])
-
-	fail := subtle.ConstantTimeSelect(subtle.ConstantTimeCompare(cipherText, cmp), 0, 1)
-	subtle.ConstantTimeCopy(fail, kr[SymBytes:], sk.z)
-
-	h := sha3.New256()
-	h.Write(kr[:])
-	sharedSecret = h.Sum(nil)
-
-	return
+	hash := make([]byte, paramsSymBytes)
+	sha3.ShakeSum256(hash, append(kr[:paramsSymBytes], krh[:]...))
+	copy(ss[:], hash[:])
+	return ss, err
 }
