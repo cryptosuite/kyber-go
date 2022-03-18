@@ -82,10 +82,10 @@ func newParamSet(name string, paramsK int, paramsETA1 int, paramsETA2 int, param
 func (pp *ParamSet) KeyPair(seed []byte) ([]byte, []byte, error) {
 	return KeyPair(pp, seed)
 }
-func (pp *ParamSet) Enc(pk []byte) ([]byte, []byte, error) {
+func (pp *ParamSet) Encaps(pk []byte) ([]byte, []byte, error) {
 	return Enc(pp, pk)
 }
-func (pp *ParamSet) Dec(cipher []byte, sk []byte) ([]byte, error) {
+func (pp *ParamSet) Decaps(cipher []byte, sk []byte) ([]byte, error) {
 	return Dec(pp, cipher, sk)
 }
 
