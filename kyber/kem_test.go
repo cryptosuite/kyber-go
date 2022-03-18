@@ -16,7 +16,7 @@ func TestKEMCorrect(t *testing.T) {
 		}
 		c, ss, err := kem.Enc(pk)
 		if err != nil {
-			t.Logf("error in Enc")
+			t.Logf("error in Encaps")
 		}
 		c1, err := kem.Dec(c, sk)
 		t.Logf("%v", c1)

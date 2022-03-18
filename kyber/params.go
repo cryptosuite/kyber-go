@@ -83,10 +83,10 @@ func (pp *ParamSet) KeyPair(seed []byte) ([]byte, []byte, error) {
 	return KeyPair(pp, seed)
 }
 func (pp *ParamSet) Enc(pk []byte) ([]byte, []byte, error) {
-	return Enc(pp, pk)
+	return Encaps(pp, pk)
 }
 func (pp *ParamSet) Dec(cipher []byte, sk []byte) ([]byte, error) {
-	return Dec(pp, cipher, sk)
+	return Decaps(pp, cipher, sk)
 }
 
 var Kyber512 = newParamSet("Kyber512", 2, 3, 2, 10, 4)

@@ -36,8 +36,8 @@ func KeyPair(pp *ParamSet, seed []byte) ([]byte, []byte, error) {
 	return pk, sk, nil
 }
 
-// Enc generates cipher text and shared secret for given public key
-func Enc(pp *ParamSet, pkB []byte) ([]byte, []byte, error) {
+// Encaps generates cipher text and shared secret for given public key
+func Encaps(pp *ParamSet, pkB []byte) ([]byte, []byte, error) {
 	if len(pkB) != pp.paramsPublicKeyBytes {
 		return nil, nil, ErrInvalidLength
 	}
@@ -68,8 +68,8 @@ func Enc(pp *ParamSet, pkB []byte) ([]byte, []byte, error) {
 	return ct, ss, nil
 }
 
-// Dec generates shared secret for given cipher text and private key
-func Dec(pp *ParamSet, cB []byte, skB []byte) ([]byte, error) {
+// Decaps generates shared secret for given cipher text and private key
+func Decaps(pp *ParamSet, cB []byte, skB []byte) ([]byte, error) {
 	ss := make([]byte, paramsSSBytes)
 
 	pk := skB[pp.paramsINDCPASecretKeyBytes : pp.paramsINDCPASecretKeyBytes+pp.paramsINDCPAPublicKeyBytes]
