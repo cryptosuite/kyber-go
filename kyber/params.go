@@ -38,7 +38,7 @@ type ParameterSet struct {
 	publicKeyBytes  int
 	secretKeyBytes  int
 	ciphertextBytes int
-	
+
 	sharedSecretBytes int
 }
 
@@ -88,7 +88,7 @@ func setParams(name string, kyberK int) *ParameterSet {
 	p.polyVecCompressedBytes = kyberK * 352
 
 	p.indcpaMsgBytes = SymBytes
-	p.indcpaPublicKeyBytes = p.polyVecBytes + SymBytes
+	p.indcpaPublicKeyBytes = p.polyVecCompressedBytes + SymBytes
 	p.indcpaSecretKeyBytes = p.polyVecBytes
 	p.indcpaBytes = p.polyVecCompressedBytes + polyCompressedBytes
 
@@ -96,7 +96,7 @@ func setParams(name string, kyberK int) *ParameterSet {
 	p.secretKeyBytes = p.indcpaSecretKeyBytes + p.indcpaPublicKeyBytes + 2*SymBytes
 	p.ciphertextBytes = p.indcpaBytes
 
-        p.sharedSecretBytes = 32
+	p.sharedSecretBytes = 32
 
 	return &p
 
